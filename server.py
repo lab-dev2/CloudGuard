@@ -73,6 +73,15 @@ class CloudGuardState:
             self.s3_bucket_policy_restricted = True
             self.add_log("CONFIG_CHANGE", "Environment switched to SECURED configuration (Multi-layer remediation active).", "SUCCESS", "127.0.0.1")
 
+    def reset(self, source_ip="127.0.0.1"):
+        self.scenario = "vulnerable"
+        self.ssrf_protection = False
+        self.imds_version = "v1"
+        self.iam_least_privilege = False
+        self.s3_bucket_policy_restricted = False
+        self.active_tokens.clear()
+        self.add_log("SYSTEM_RESET", "Environment reset to baseline vulnerable configuration; temporary tokens cleared.", "INFO", source_ip)
+
     def toggle(self, key, value):
         self.scenario = "custom"
         if key == "ssrf_protection":
@@ -224,6 +233,12 @@ class CloudGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"success": True, "scenario": STATE.scenario, "status": self._get_status_dict()})
             else:
                 self.send_json({"error": "Invalid scenario name. Use 'vulnerable' or 'secured'."}, 400)
+            return
+
+        # 1b. Reset Scenario to Baseline Vulnerable
+        if path == "/api/config/reset":
+            STATE.reset(self.client_address[0])
+            self.send_json({"success": True, "scenario": STATE.scenario, "status": self._get_status_dict()})
             return
 
         # 2. Toggle Individual Security Features

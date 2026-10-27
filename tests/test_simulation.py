@@ -122,8 +122,47 @@ def run_all_tests():
     d_logs = json.loads(res_logs.read().decode("utf-8"))
     test("CloudTrail Event Logging", len(d_logs.get("logs", [])) >= 5, f"{len(d_logs.get('logs', []))} audit events logged")
 
+    # 13. Dedicated Backend Reset Test (POST /api/config/reset)
+    req_sec = urllib.request.Request(
+        f"{BASE}/api/config/scenario",
+        data=json.dumps({"scenario": "secured"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    res_sec = urllib.request.urlopen(req_sec)
+    st_sec = json.loads(res_sec.read().decode("utf-8"))["status"]
+    assert st_sec["scenario"] == "secured" and st_sec["controls"]["ssrf_protection"] is True
+
+    req_rst = urllib.request.Request(
+        f"{BASE}/api/config/reset",
+        data=json.dumps({}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    res_rst = urllib.request.urlopen(req_rst)
+    d_rst = json.loads(res_rst.read().decode("utf-8"))
+    st_rst = d_rst.get("status", {})
+    ctrls = st_rst.get("controls", {})
+
+    reset_ok = (
+        res_rst.getcode() == 200 and
+        d_rst.get("success") is True and
+        d_rst.get("scenario") == "vulnerable" and
+        st_rst.get("scenario") == "vulnerable" and
+        ctrls.get("ssrf_protection") is False and
+        ctrls.get("imds_version") == "v1" and
+        ctrls.get("iam_least_privilege") is False and
+        ctrls.get("s3_bucket_policy") is False and
+        st_rst.get("threat_level") == "CRITICAL"
+    )
+    test("Backend Reset to Vulnerable Baseline", reset_ok, f"Scenario: {d_rst.get('scenario')}, Controls: {ctrls}")
+
+    # 14. Verify SYSTEM_RESET Audit Event
+    res_logs_after = urllib.request.urlopen(f"{BASE}/api/logs")
+    d_logs_after = json.loads(res_logs_after.read().decode("utf-8"))
+    has_reset_event = any(l.get("event_name") == "SYSTEM_RESET" for l in d_logs_after.get("logs", []))
+    test("SYSTEM_RESET Audit Event Recorded", has_reset_event, "SYSTEM_RESET event confirmed in audit log")
+
     print("=" * 65)
-    print("  ALL 12 AUTOMATED TESTS PASSED SUCCESSFULLY!")
+    print("  ALL 14 AUTOMATED TESTS PASSED SUCCESSFULLY!")
     print("=" * 65)
 
 if __name__ == '__main__':
