@@ -401,11 +401,13 @@ class CloudGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # 7. Simulated AWS IMDS Endpoint: /latest/meta-data/...
         if path.startswith("/latest/meta-data"):
-            res = self._handle_imds_request(path)
-            if isinstance(res, dict):
-                self.send_json(res, status_code=res.get("status_code", 200))
+            imds_res = self._handle_imds_request(path)
+            status_code = imds_res.get("status_code", 200)
+            body = imds_res.get("body", "")
+            if isinstance(body, dict):
+                self.send_json(body, status_code=status_code)
             else:
-                self.send_text(res)
+                self.send_text(str(body), status_code=status_code)
             return
 
         # 8. Static file fallback
@@ -535,8 +537,7 @@ class CloudGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def _handle_imds_request(self, full_path):
         token = self.headers.get("X-aws-ec2-metadata-token")
-        eval_res = self._evaluate_imds(full_path, token)
-        return eval_res.get("body")
+        return self._evaluate_imds(full_path, token)
 
     # -------------------------------------------------------------
     # Helper: Interactive AWS CLI Terminal Simulator

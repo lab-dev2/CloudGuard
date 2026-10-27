@@ -221,8 +221,89 @@ def run_all_tests():
         )
         test("Isolated S3 Bucket Policy Denial (aws:sourceVpce)", is_bucket_policy_denial, f"HTTP {e.code} - {err_msg}")
 
+    # 16. Automated IMDSv2 Token-Handshake Tests
+    # 16.1 Start from a clean baseline and enable IMDSv2 mode
+    req_clean_imds = urllib.request.Request(
+        f"{BASE}/api/config/reset",
+        data=json.dumps({}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    urllib.request.urlopen(req_clean_imds)
+
+    req_enable_imds2 = urllib.request.Request(
+        f"{BASE}/api/config/toggle",
+        data=json.dumps({"key": "imds_version", "value": "v2"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    res_toggle_imds2 = urllib.request.urlopen(req_enable_imds2)
+    st_imds2 = json.loads(res_toggle_imds2.read().decode("utf-8"))["status"]
+    assert st_imds2["controls"]["imds_version"] == "v2", "IMDS version must be v2"
+    test("IMDSv2 Mode Enabled (POST /api/config/toggle)", st_imds2["controls"]["imds_version"] == "v2", "imds_version set to v2")
+
+    # 16.2 Request a token using PUT /latest/api/token with a valid TTL header
+    req_put_token = urllib.request.Request(
+        f"{BASE}/latest/api/token",
+        method="PUT",
+        headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"}
+    )
+    res_token = urllib.request.urlopen(req_put_token)
+    token_val = res_token.read().decode("utf-8").strip()
+    # Verify token issuance without depending on any hardcoded token value
+    token_ok = res_token.getcode() == 200 and len(token_val) > 0 and isinstance(token_val, str)
+    test("IMDSv2 Token Issuance (PUT /latest/api/token)", token_ok, f"HTTP {res_token.getcode()}, Dynamic token length: {len(token_val)}")
+
+    # 16.3 Use the returned token to request IAM role credentials metadata endpoint
+    cred_url = f"{BASE}/latest/meta-data/iam/security-credentials/app-waf-production-role"
+    req_with_token = urllib.request.Request(
+        cred_url,
+        headers={"X-aws-ec2-metadata-token": token_val}
+    )
+    res_with_token = urllib.request.urlopen(req_with_token)
+    d_with_token = json.loads(res_with_token.read().decode("utf-8"))
+    creds_valid = (
+        res_with_token.getcode() == 200 and
+        d_with_token.get("Code") == "Success" and
+        "AccessKeyId" in d_with_token and
+        "SecretAccessKey" in d_with_token and
+        "Token" in d_with_token
+    )
+    test("IMDSv2 Authenticated GET with Dynamic Token", creds_valid, f"HTTP {res_with_token.getcode()}, AccessKeyId: {d_with_token.get('AccessKeyId')}")
+
+    # 16.4 Make the same request without a token and verify HTTP 401
+    req_no_token = urllib.request.Request(cred_url)
+    try:
+        urllib.request.urlopen(req_no_token)
+        test("IMDSv2 Unauthenticated GET Blocked", False, "Expected HTTP 401 Unauthorized but request succeeded")
+    except urllib.error.HTTPError as e:
+        body_no_token = e.read().decode("utf-8")
+        test("IMDSv2 Unauthenticated GET Blocked", e.code == 401 and "401" in body_no_token, f"HTTP {e.code} Unauthorized (token missing)")
+
+    # 16.5 Make a request with an invalid token and verify HTTP 401
+    invalid_token = f"invalid-token-{token_val[::-1]}"
+    req_invalid_token = urllib.request.Request(
+        cred_url,
+        headers={"X-aws-ec2-metadata-token": invalid_token}
+    )
+    try:
+        urllib.request.urlopen(req_invalid_token)
+        test("IMDSv2 Invalid Token GET Blocked", False, "Expected HTTP 401 Unauthorized but request succeeded")
+    except urllib.error.HTTPError as e:
+        body_invalid_token = e.read().decode("utf-8")
+        test("IMDSv2 Invalid Token GET Blocked", e.code == 401 and "401" in body_invalid_token, f"HTTP {e.code} Unauthorized (invalid token)")
+
+    # 16.6 Restore the backend to known baseline so other tests are not affected
+    req_restore = urllib.request.Request(
+        f"{BASE}/api/config/reset",
+        data=json.dumps({}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    res_restore = urllib.request.urlopen(req_restore)
+    st_restored = json.loads(res_restore.read().decode("utf-8"))["status"]
+    assert st_restored["scenario"] == "vulnerable" and st_restored["controls"]["imds_version"] == "v1"
+    test("Backend Restored to Baseline After IMDSv2 Tests", res_restore.getcode() == 200, "Backend cleanly reset to vulnerable baseline")
+
     print("=" * 65)
-    print("  ALL 15 AUTOMATED TESTS PASSED SUCCESSFULLY!")
+    print("  ALL 21 AUTOMATED TESTS PASSED SUCCESSFULLY!")
     print("=" * 65)
 
 if __name__ == '__main__':
