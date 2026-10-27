@@ -161,8 +161,68 @@ def run_all_tests():
     has_reset_event = any(l.get("event_name") == "SYSTEM_RESET" for l in d_logs_after.get("logs", []))
     test("SYSTEM_RESET Audit Event Recorded", has_reset_event, "SYSTEM_RESET event confirmed in audit log")
 
+    # 15. Isolated S3 Bucket-Policy Test (PRD Section 7 & 8)
+    # 15.1 Start from a known clean state via reset
+    req_clean = urllib.request.Request(
+        f"{BASE}/api/config/reset",
+        data=json.dumps({}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    urllib.request.urlopen(req_clean)
+
+    # 15.2 Explicitly disable IAM least privilege and enable S3 bucket policy restriction
+    req_toggle_iam = urllib.request.Request(
+        f"{BASE}/api/config/toggle",
+        data=json.dumps({"key": "iam_least_privilege", "value": False}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    urllib.request.urlopen(req_toggle_iam)
+
+    req_toggle_s3 = urllib.request.Request(
+        f"{BASE}/api/config/toggle",
+        data=json.dumps({"key": "s3_bucket_policy", "value": True}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    urllib.request.urlopen(req_toggle_s3)
+
+    # Verify control state: IAM is broad (False), S3 bucket policy is restricted (True)
+    res_st_iso = urllib.request.urlopen(f"{BASE}/api/status")
+    d_st_iso = json.loads(res_st_iso.read().decode("utf-8"))
+    iso_ctrls = d_st_iso.get("controls", {})
+    assert iso_ctrls.get("iam_least_privilege") is False, "IAM least privilege must be False"
+    assert iso_ctrls.get("s3_bucket_policy") is True, "S3 bucket policy must be True"
+
+    # 15.3 Attempt GetObject on synthetic target bucket and object
+    iso_key = d_st_iso["iam_role"]["credentials_active"]
+    req_iso_s3 = urllib.request.Request(
+        f"{BASE}/api/aws/s3",
+        data=json.dumps({
+            "action": "GetObject",
+            "bucket": "c1-prod-credit-applications",
+            "key": "customer_credit_applications_2019.json",
+            "auth": iso_key
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+
+    try:
+        urllib.request.urlopen(req_iso_s3)
+        test("Isolated S3 Bucket Policy Denial (aws:sourceVpce)", False, "Expected HTTP 403 AccessDenied but operation succeeded")
+    except urllib.error.HTTPError as e:
+        iso_body = json.loads(e.read().decode("utf-8"))
+        err_msg = iso_body.get("error_message", "")
+        # Prove denial specifically comes from S3 bucket policy condition aws:sourceVpce, NOT IAM
+        is_bucket_policy_denial = (
+            e.code == 403 and
+            iso_body.get("error_code") == "AccessDenied" and
+            "aws:sourceVpce" in err_msg and
+            "S3 Bucket Policy" in err_msg and
+            "identity-based policy" not in err_msg
+        )
+        test("Isolated S3 Bucket Policy Denial (aws:sourceVpce)", is_bucket_policy_denial, f"HTTP {e.code} - {err_msg}")
+
     print("=" * 65)
-    print("  ALL 14 AUTOMATED TESTS PASSED SUCCESSFULLY!")
+    print("  ALL 15 AUTOMATED TESTS PASSED SUCCESSFULLY!")
     print("=" * 65)
 
 if __name__ == '__main__':
