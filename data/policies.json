@@ -1,0 +1,172 @@
+{
+  "scenarios": {
+    "vulnerable": {
+      "title": "Vulnerable Configuration (Capital One 2019 State)",
+      "description": "EC2 instance running ModSecurity reverse proxy with open SSRF forwarding, IMDSv1 enabled (no token required), and an IAM role with full administrative S3 permissions (s3:* on all resources).",
+      "threat_level": "CRITICAL",
+      "iam_role_name": "app-waf-production-role",
+      "imds_version": "v1",
+      "ssrf_protection": false,
+      "s3_bucket_policy_restricted": false,
+      "iam_policy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "AllowAllS3WildcardActions",
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*",
+            "SecurityComment": "CRITICAL FLAW: Wildcard permission allows the WAF instance to execute ListAllMyBuckets, GetObject, and PutObject across every single S3 bucket in the AWS account."
+          },
+          {
+            "Sid": "CloudWatchMetricsAndLogs",
+            "Effect": "Allow",
+            "Action": [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+          }
+        ]
+      },
+      "s3_bucket_policy": {
+        "Version": "2012-10-17",
+        "Id": "OpenCreditApplicationsBucketPolicy",
+        "Statement": [
+          {
+            "Sid": "AllowAnyInternalRoleAccess",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::c1-prod-credit-applications/*",
+            "SecurityComment": "CRITICAL FLAW: No aws:sourceVpce condition or KMS encryption key boundary. Any principal with s3:GetObject can read the files."
+          }
+        ]
+      },
+      "ssrf_defense_config": {
+        "filter_enabled": false,
+        "blocked_targets": [],
+        "explanation": "Incoming reverse proxy forwards queries to any supplied URL without filtering link-local addresses (169.254.169.254) or RFC1918 private subnets."
+      }
+    },
+    "secured": {
+      "title": "Secured Configuration (Remediated CloudGuard State)",
+      "description": "Multi-layered defense: SSRF filter blocks link-local/RFC1918 targets, IMDSv2 enforces session tokens (PUT handshake with hop-limit=1), IAM role follows Least Privilege with explicit deny on sensitive data, and S3 bucket restricts access strictly to VPC Endpoints.",
+      "threat_level": "SECURE",
+      "iam_role_name": "app-waf-production-role",
+      "imds_version": "v2",
+      "ssrf_protection": true,
+      "s3_bucket_policy_restricted": true,
+      "iam_policy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Sid": "RestrictedCloudWatchLogsOnly",
+            "Effect": "Allow",
+            "Action": [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:us-east-1:123456789012:log-group:/aws/waf/*",
+            "SecurityComment": "SECURED: WAF role is tightly scoped strictly to writing its own operational logs."
+          },
+          {
+            "Sid": "ExplicitDenyCustomerS3Buckets",
+            "Effect": "Deny",
+            "Action": "s3:*",
+            "Resource": [
+              "arn:aws:s3:::c1-prod-credit-applications",
+              "arn:aws:s3:::c1-prod-credit-applications/*",
+              "arn:aws:s3:::c1-customer-pii-vault",
+              "arn:aws:s3:::c1-customer-pii-vault/*"
+            ],
+            "SecurityComment": "SECURED: Explicit DENY always overrides any Allow statements in IAM evaluation logic."
+          }
+        ]
+      },
+      "s3_bucket_policy": {
+        "Version": "2012-10-17",
+        "Id": "StrictVpcEndpointCreditApplicationsPolicy",
+        "Statement": [
+          {
+            "Sid": "EnforceVPCEndpointAndCMKKmsOnly",
+            "Effect": "Deny",
+            "Principal": "*",
+            "Action": "s3:*",
+            "Resource": [
+              "arn:aws:s3:::c1-prod-credit-applications",
+              "arn:aws:s3:::c1-prod-credit-applications/*"
+            ],
+            "Condition": {
+              "StringNotEquals": {
+                "aws:sourceVpce": "vpce-0192837465abcdef"
+              }
+            },
+            "SecurityComment": "SECURED: Requests originating outside the designated VPC Endpoint are unconditionally denied."
+          }
+        ]
+      },
+      "ssrf_defense_config": {
+        "filter_enabled": true,
+        "blocked_targets": [
+          "169.254.169.254",
+          "127.0.0.1",
+          "localhost",
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "192.168.0.0/16"
+        ],
+        "explanation": "Strict URL validation whitelist and socket connection interception. Metadata service link-local address is completely unreachable via proxy."
+      }
+    }
+  },
+  "buckets": [
+    {
+      "name": "c1-prod-credit-applications",
+      "classification": "CONFIDENTIAL_PII",
+      "description": "Archive of credit card applications (2005-2019) including SSNs, credit scores, and income.",
+      "record_count": 106000000,
+      "sensitive": true,
+      "files": [
+        "customer_credit_applications_2019.json",
+        "financial_records_archive.tar.gz",
+        "application_evaluations_summary.csv"
+      ]
+    },
+    {
+      "name": "c1-customer-pii-vault",
+      "classification": "RESTRICTED",
+      "description": "Encrypted identity and SSN verification store.",
+      "record_count": 140000000,
+      "sensitive": true,
+      "files": [
+        "ssn_lookup_table.db",
+        "tax_identification_records.enc"
+      ]
+    },
+    {
+      "name": "c1-waf-logs-archive",
+      "classification": "INTERNAL",
+      "description": "Web Application Firewall HTTP access and telemetry logs.",
+      "record_count": 450000,
+      "sensitive": false,
+      "files": [
+        "waf_access_2019_02.log",
+        "modsec_audit_events.log"
+      ]
+    },
+    {
+      "name": "c1-compliance-archive-2019",
+      "classification": "INTERNAL_AUDIT",
+      "description": "SOC-2 and PCI-DSS annual compliance assessments.",
+      "record_count": 120,
+      "sensitive": false,
+      "files": [
+        "pci_dss_attestation_2019.pdf",
+        "cloud_architecture_review.pdf"
+      ]
+    }
+  ]
+}

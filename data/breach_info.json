@@ -1,0 +1,92 @@
+{
+  "breach_title": "The 2019 Capital One Cloud Data Breach",
+  "incident_date": "March 22 - March 23, 2019 (Discovered July 17, 2019)",
+  "attacker": "Paige Thompson (alias 'erratic', former AWS software engineer)",
+  "impact": {
+    "individuals_affected": "Approx. 106 Million (100M US residents, 6M Canadian residents)",
+    "data_compromised": "140,000 Social Security numbers, 80,000 linked bank account numbers, 1 Million Canadian Social Insurance Numbers, millions of credit scores, limits, balances, and payment histories.",
+    "financial_penalties": "$80 Million regulatory fine by the OCC (Office of the Comptroller of the Currency), $190 Million customer class action settlement, and over $300 Million in total incident remediation costs."
+  },
+  "root_causes": [
+    {
+      "order": 1,
+      "name": "SSRF Vulnerability in WAF / Reverse Proxy",
+      "category": "Application Security",
+      "severity": "HIGH",
+      "summary": "An open-source Web Application Firewall (ModSecurity) running on an Amazon EC2 instance had a misconfigured proxy feature that allowed external requests to be redirected to internal services without host/IP validation.",
+      "cve_pattern": "CWE-918: Server-Side Request Forgery"
+    },
+    {
+      "order": 2,
+      "name": "Reliance on Unprotected AWS IMDSv1",
+      "category": "Cloud Architecture",
+      "severity": "HIGH",
+      "summary": "The EC2 instance was using AWS Instance Metadata Service version 1 (IMDSv1). In IMDSv1, metadata is queried via plain HTTP GET requests without session tokens. When an SSRF flaw existed, the attacker could easily fetch temporary STS security credentials.",
+      "cve_pattern": "Unauthenticated Link-Local Metadata Access (169.254.169.254)"
+    },
+    {
+      "order": 3,
+      "name": "Excessive IAM Role Permissions (Violation of Least Privilege)",
+      "category": "Identity and Access Management",
+      "severity": "CRITICAL",
+      "summary": "The IAM instance profile assigned to the WAF server (app-waf-role) was granted broad wildcard permissions (s3:* on *). A WAF has no business need to read or sync customer credit application S3 buckets.",
+      "cve_pattern": "CWE-272: Least Privilege Violation"
+    },
+    {
+      "order": 4,
+      "name": "Lack of S3 Bucket Egress and VPC Endpoint Controls",
+      "category": "Storage Security",
+      "severity": "MEDIUM",
+      "summary": "Sensitive S3 buckets holding unencrypted or transparently decrypted customer records did not restrict access to specific VPC Endpoints or enforce Customer Managed KMS key policies that required secondary authorization.",
+      "cve_pattern": "Inadequate Perimeter and Key Boundaries"
+    }
+  ],
+  "defense_layers": [
+    {
+      "layer": "Layer 1: Edge & Application",
+      "solution": "SSRF Input Validation and Link-Local Blacklisting",
+      "detail": "Validate all incoming URLs, reject loopback (127.0.0.1) and link-local (169.254.169.254) addresses, or enforce domain allowlists."
+    },
+    {
+      "layer": "Layer 2: Cloud Instance Security",
+      "solution": "Mandatory AWS IMDSv2 Enforcement",
+      "detail": "Configure instances with HttpTokens=required and HttpPutResponseHopLimit=1. Requires a session-oriented PUT request with token header, neutralizing simple SSRF and proxy traversal."
+    },
+    {
+      "layer": "Layer 3: Cloud Identity & Access (IAM)",
+      "solution": "Principle of Least Privilege & Service Control Policies (SCPs)",
+      "detail": "Limit the WAF EC2 role exclusively to CloudWatch logging actions. Implement explicit Deny statements for sensitive customer buckets."
+    },
+    {
+      "layer": "Layer 4: Data & Perimeter Security",
+      "solution": "S3 Bucket Policies & KMS Envelope Encryption",
+      "detail": "Enforce aws:sourceVpce conditions so bucket access is strictly limited to authorized VPC Endpoints, and require dedicated AWS KMS CMKs."
+    }
+  ],
+  "timeline": [
+    {
+      "date": "March 2019",
+      "event": "Attacker scans the internet for SSRF-vulnerable reverse proxies and discovers Capital One's EC2 ModSecurity instance."
+    },
+    {
+      "date": "March 22, 2019",
+      "event": "Attacker executes SSRF against 169.254.169.254 to harvest temporary AWS STS credentials for the 'WAFF-Role'."
+    },
+    {
+      "date": "March 23, 2019",
+      "event": "Using the stolen credentials, the attacker lists ~700 S3 buckets and executes 'aws s3 sync' to exfiltrate credit applications."
+    },
+    {
+      "date": "July 17, 2019",
+      "event": "A security researcher spots GitHub posts containing the exfiltrated bucket commands and alerts Capital One's security team."
+    },
+    {
+      "date": "July 29, 2019",
+      "event": "FBI arrests the suspect; Capital One publicly discloses the incident."
+    },
+    {
+      "date": "November 2019",
+      "event": "AWS launches IMDSv2 globally to protect EC2 instance metadata from SSRF vulnerabilities."
+    }
+  ]
+}

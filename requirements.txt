@@ -1,0 +1,7 @@
+# CloudGuard: Capital One Cloud Breach Analysis and Prevention Prototype
+#
+# NOTE: CloudGuard is built intentionally using Python's standard library (http.server, urllib, json).
+# It requires NO external pip packages to run! Everything executes locally on any computer with Python 3.8+.
+#
+# Optional packages for development and extended REST tooling:
+requests>=2.28.0
